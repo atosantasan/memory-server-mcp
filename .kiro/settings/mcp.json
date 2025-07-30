@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "memory-server": {
+      "command": "/Users/yokotaken1208/DEV/AI/MyMemoryMCP/dist/MemoryServerMCP-Console",
+      "args": [],
+      "env": {
+        "MEMORY_SERVER_HOST": "localhost",
+        "MEMORY_SERVER_PORT": "8000",
+        "MEMORY_LOG_LEVEL": "INFO",
+        "MEMORY_DB_PATH": "/Users/yokotaken1208/DEV/AI/MyMemoryMCP/memory.db"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "add_note_to_memory",
+        "search_memory",
+        "list_all_memories",
+        "get_project_rules",
+        "update_memory_entry",
+        "delete_memory_entry"
+      ]
+    }
+  }
+}
