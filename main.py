@@ -1894,6 +1894,27 @@ def is_pyinstaller():
     """PyInstallerで実行されているかチェック"""
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
+def setup_windows_asyncio():
+    """Windowsでのasyncio環境セットアップ"""
+    import sys
+    import asyncio
+    
+    if sys.platform.startswith('win'):
+        # Windows環境でのイベントループポリシー設定
+        if hasattr(asyncio, 'WindowsProactorEventLoopPolicy'):
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            logger.info("WindowsProactorEventLoopPolicy を設定しました")
+        
+        # PyInstaller環境での特別な設定
+        if is_pyinstaller():
+            # 新しいイベントループを作成
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            logger.info("PyInstaller環境用の新しいイベントループを設定しました")
+            return loop
+    
+    return None
+
 if __name__ == "__main__":
     import sys
     import asyncio
@@ -1902,25 +1923,29 @@ if __name__ == "__main__":
         # PyInstaller環境での実行
         logger.info("PyInstaller環境で実行中...")
         try:
-            # 新しいイベントループを作成して実行
-            if hasattr(asyncio, 'WindowsProactorEventLoopPolicy'):
-                # Windowsの場合
-                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            # Windows用のasyncio環境をセットアップ
+            custom_loop = setup_windows_asyncio()
             
-            # 新しいイベントループで実行
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                exit_code = loop.run_until_complete(main())
+            if custom_loop:
+                # カスタムループを使用して実行
+                try:
+                    exit_code = custom_loop.run_until_complete(main())
+                    sys.exit(exit_code)
+                finally:
+                    custom_loop.close()
+            else:
+                # 通常の実行方法にフォールバック
+                exit_code = asyncio.run(main())
                 sys.exit(exit_code)
-            finally:
-                loop.close()
                 
         except Exception as e:
             logger.error(f"PyInstaller execution error: {e}")
+            logger.exception("Full error traceback:")
             sys.exit(1)
     else:
         # 通常の実行環境
+        # Windows用のasyncio環境をセットアップ（オプション）
+        setup_windows_asyncio()
+        
         exit_code = run_server()
         sys.exit(exit_code)
