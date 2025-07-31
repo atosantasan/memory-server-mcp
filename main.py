@@ -13,7 +13,7 @@ from dataclasses import dataclass, asdict
 import json
 
 from fastapi import FastAPI, HTTPException
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 import uvicorn
 
 # Configuration class with enhanced settings
@@ -29,6 +29,9 @@ class Config:
     MAX_SEARCH_RESULTS = int(os.getenv("MEMORY_MAX_SEARCH_RESULTS", "100"))
     LOG_FILE = os.getenv("MEMORY_LOG_FILE", "memory_server.log")
     LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    # HTTP transport設定
+    MCP_HTTP_PATH = os.getenv("MCP_HTTP_PATH", "/mcp")
     
     # Validate configuration
     @classmethod
@@ -1721,6 +1724,7 @@ class ServerManager:
             logger.info(f"  Database: {Config.DATABASE_PATH}")
             logger.info(f"  Log File: {Config.LOG_FILE}")
             logger.info(f"  Max Search Results: {Config.MAX_SEARCH_RESULTS}")
+            logger.info(f"  MCP HTTP Path: {Config.MCP_HTTP_PATH}")
             
             # Initialize and verify database connection
             logger.info("Initializing database connection...")
@@ -1735,36 +1739,23 @@ class ServerManager:
             logger.info("- list_all_memories: すべてのメモリエントリを一覧表示")
             logger.info("- get_project_rules: プロジェクトルールタグ付きメモリを取得")
             
-            # Start MCP server
-            logger.info("Starting MCP server...")
-            # fastmcpのrun()ではなくrun_async()を直接使用してasyncio問題を回避
-            mcp_task = asyncio.create_task(mcp.run_async("stdio"))
-            logger.info("✓ MCP server started successfully")
+            # Start MCP server with HTTP transport (streamable-http)  
+            logger.info("Starting MCP server with HTTP transport...")
+            # FastMCPのHTTP transport使用で複数クライアント対応
+            mcp_task = asyncio.create_task(mcp.run_streamable_http_async())
+            logger.info(f"✓ MCP server started on http://{Config.HOST}:{Config.PORT}{Config.MCP_HTTP_PATH}")
             
-            # Start FastAPI server with enhanced configuration
-            logger.info("Starting FastAPI server...")
-            config = uvicorn.Config(
-                app,
-                host=Config.HOST,
-                port=Config.PORT,
-                log_level=Config.LOG_LEVEL.lower(),
-                access_log=False,  # Disable access logs to reduce noise
-                server_header=False,  # Remove server header for security
-                date_header=False  # Remove date header for performance
-            )
+            tasks = [mcp_task]
             
-            self.fastapi_server = uvicorn.Server(config)
-            fastapi_task = asyncio.create_task(self.fastapi_server.serve())
-            
-            logger.info(f"✓ FastAPI server started on http://{Config.HOST}:{Config.PORT}")
             logger.info("=== Memory Server MCP is fully operational ===")
             logger.info("Press Ctrl+C to shutdown gracefully")
             
             self.servers_running = True
             
             # Wait for shutdown signal or server completion
+            tasks.append(asyncio.create_task(self.shutdown_event.wait()))
             done, pending = await asyncio.wait(
-                [mcp_task, fastapi_task, asyncio.create_task(self.shutdown_event.wait())],
+                tasks,
                 return_when=asyncio.FIRST_COMPLETED
             )
             
