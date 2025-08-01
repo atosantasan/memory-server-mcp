@@ -12,7 +12,9 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, asdict
 import json
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from mcp.server.fastmcp import FastMCP
 import uvicorn
 
@@ -199,8 +201,41 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# PyInstaller環境用のリソースパス取得関数
+def get_resource_path(relative_path):
+    """PyInstaller環境でのリソースパス取得"""
+    import sys
+    import os
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller環境
+        return os.path.join(sys._MEIPASS, relative_path)
+    else:
+        # 開発環境
+        return relative_path
+
+# WebUI関連の初期化（エラー時はMCP機能を継続）
+webui_enabled = False
+templates = None
+
+try:
+    # Mount static files
+    static_path = get_resource_path("static")
+    templates_path = get_resource_path("templates")
+    
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+    templates = Jinja2Templates(directory=templates_path)
+    webui_enabled = True
+    logger.info("WebUI機能が正常に初期化されました")
+except Exception as e:
+    logger.warning(f"WebUI機能の初期化に失敗しました（MCP機能は正常動作）: {e}")
+    webui_enabled = False
+    templates = None
+
 # Initialize FastMCP with proper configuration
 mcp = FastMCP("Memory Server")
+
+# 古いWebUI統合コードを削除（ポート分離戦略に統一）
+# WebUI機能は webui_server.py (ポート8001) で提供
 
 # FastAPI error handlers
 @app.exception_handler(NotFoundError)
@@ -684,8 +719,22 @@ class MemoryService:
             ErrorResponse.log_error(e, "list_all_memories", {"limit": limit})
             raise MemoryServerError(f"Failed to list memory entries: {e}")
 
-# Initialize memory service
-memory_service = MemoryService(Config.DATABASE_PATH)
+# Initialize memory service with proper database path
+# データベースファイルは実行ファイルと同じフォルダから参照
+def get_database_path(db_filename):
+    """実行ファイルと同じディレクトリからデータベースファイルのパスを取得"""
+    import sys
+    import os
+    if hasattr(sys, 'frozen') and sys.frozen:
+        # PyInstaller EXE環境 - 実行ファイルのディレクトリを取得
+        exe_dir = os.path.dirname(sys.executable)
+        return os.path.join(exe_dir, db_filename)
+    else:
+        # 開発環境 - カレントディレクトリから参照
+        return db_filename
+
+database_path = get_database_path(Config.DATABASE_PATH)
+memory_service = MemoryService(database_path)
 
 # MCP error handling utilities
 def handle_mcp_error(func):
@@ -800,6 +849,28 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "database": "connected"
     }
+
+# WebUI shared functions
+def get_webui_error_response():
+    """WebUI無効時のエラーレスポンス"""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content="""
+        <html>
+        <head><title>WebUI機能が無効です</title></head>
+        <body>
+        <h1>WebUI機能が無効です</h1>
+        <p>WebUI機能の初期化に失敗したため利用できません。</p>
+        <p><strong>MCP機能は正常に動作します</strong>: <a href="/mcp">http://localhost:8000/mcp</a></p>
+        <p>理由: templates/staticファイルが見つからないか、初期化中にエラーが発生しました。</p>
+        </body>
+        </html>
+        """,
+        status_code=503
+    )
+
+# 古いWebUIエンドポイントを削除（ポート分離戦略に統一）
+# WebUIは webui_server.py (ポート8001) で提供
 
 # MCP Tools Implementation
 
@@ -1740,14 +1811,19 @@ class ServerManager:
             logger.info("- get_project_rules: プロジェクトルールタグ付きメモリを取得")
             
             # Start MCP server with HTTP transport (streamable-http)  
-            logger.info("Starting MCP server with HTTP transport...")
             # FastMCPのHTTP transport使用で複数クライアント対応
+            # NOTE: FastMCPは内部的にFastAPIサーバーを起動するため、WebUI/REST APIも同時に利用可能
+            logger.info("Starting MCP server with integrated FastAPI (HTTP transport)...")
             mcp_task = asyncio.create_task(mcp.run_streamable_http_async())
             logger.info(f"✓ MCP server started on http://{Config.HOST}:{Config.PORT}{Config.MCP_HTTP_PATH}")
+            logger.info(f"✓ FastAPI server integrated within MCP server")
+            logger.info(f"✓ WebUI available at: http://{Config.HOST}:{Config.PORT}/web")
+            logger.info(f"✓ REST API available at: http://{Config.HOST}:{Config.PORT}")
             
             tasks = [mcp_task]
             
             logger.info("=== Memory Server MCP is fully operational ===")
+            logger.info("Both MCP and FastAPI servers are running concurrently")
             logger.info("Press Ctrl+C to shutdown gracefully")
             
             self.servers_running = True
@@ -1786,16 +1862,8 @@ class ServerManager:
         logger.info("=== Initiating graceful shutdown ===")
         
         try:
-            # Shutdown FastAPI server
-            if self.fastapi_server:
-                logger.info("Shutting down FastAPI server...")
-                self.fastapi_server.should_exit = True
-                # Give it a moment to shutdown gracefully
-                await asyncio.sleep(0.5)
-                logger.info("✓ FastAPI server shutdown complete")
-            
-            # MCP server will be cancelled by the main task cancellation
-            logger.info("✓ MCP server shutdown complete")
+            # MCP server (with integrated FastAPI) will be cancelled by the main task cancellation
+            logger.info("✓ MCP server (with integrated FastAPI) shutdown complete")
             
             # Close database connections
             logger.info("Closing database connections...")
@@ -1817,32 +1885,45 @@ server_manager = ServerManager()
 
 async def main():
     """
-    Main function to run both MCP and FastAPI servers concurrently
+    Main function to run both MCP and WebUI servers concurrently
     Implements proper lifecycle management and graceful shutdown
     """
     import sys
     
     try:
-        # Check if we should run only FastAPI for testing
-        if len(sys.argv) > 1 and sys.argv[1] == "--api-only":
-            logger.info("Starting FastAPI server only (testing mode)...")
-            # FastAPI server configuration
-            config = uvicorn.Config(
-                app=app,
-                host=Config.HOST,
-                port=Config.PORT,
-                log_level=Config.LOG_LEVEL.lower()
-            )
-            server = uvicorn.Server(config)
-            await server.serve()
-            return 0
+        # Check command line arguments
+        if len(sys.argv) > 1:
+            if sys.argv[1] == "--api-only":
+                logger.info("Starting MCP server only (testing mode)...")
+                # MCP server configuration
+                config = uvicorn.Config(
+                    app=app,
+                    host=Config.HOST,
+                    port=Config.PORT,
+                    log_level=Config.LOG_LEVEL.lower()
+                )
+                server = uvicorn.Server(config)
+                await server.serve()
+                return 0
+            elif sys.argv[1] == "--webui-only":
+                logger.info("Starting WebUI server only (testing mode)...")
+                from webui_server import create_webui_server
+                webui_server = create_webui_server(port=8001, mcp_port=Config.PORT)
+                await webui_server.run()
+                return 0
+        
+        # Default: Start both MCP and WebUI servers concurrently
+        logger.info("🚀 Starting Memory Server MCP with WebUI...")
+        logger.info(f"📊 MCP Server: http://{Config.HOST}:{Config.PORT}")
+        logger.info(f"🌐 WebUI Server: http://localhost:8001")
         
         # Setup signal handlers for graceful shutdown
         import signal
+        shutdown_event = asyncio.Event()
         
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating shutdown...")
-            server_manager.signal_shutdown()
+            shutdown_event.set()
         
         # Register signal handlers (Unix-like systems)
         try:
@@ -1852,18 +1933,60 @@ async def main():
             # Windows doesn't support SIGTERM
             signal.signal(signal.SIGINT, signal_handler)
         
-        # Start servers
-        await server_manager.start_servers()
+        # Start all three servers concurrently (3サーバー分離戦略)
+        from webui_server import create_webui_server
+        from api_server import create_api_server
         
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
+        webui_server = create_webui_server(port=8001, api_port=8002)
+        api_server = create_api_server(port=8002)
+        
+        # Create tasks for all three servers
+        mcp_task = asyncio.create_task(server_manager.start_servers())
+        webui_task = asyncio.create_task(webui_server.run())
+        api_task = asyncio.create_task(api_server.run())
+        
+        # Wait for shutdown signal or server completion
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+        
+        try:
+            # Wait for any task to complete (normal completion or shutdown signal)
+            done, pending = await asyncio.wait(
+                [mcp_task, webui_task, api_task, shutdown_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel remaining tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                    
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received")
+            # Cancel both server tasks
+            mcp_task.cancel()
+            webui_task.cancel()
+            
+            # Wait for cancellation
+            try:
+                await mcp_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await webui_task
+            except asyncio.CancelledError:
+                pass
+        
     except Exception as e:
         logger.error(f"Server error: {e}")
         logger.exception("Full error traceback:")
         return 1
     finally:
-        # Ensure cleanup
+        # Ensure MCP server cleanup
         await server_manager.shutdown_servers()
+        logger.info("🛑 All servers shut down successfully")
     
     return 0
 

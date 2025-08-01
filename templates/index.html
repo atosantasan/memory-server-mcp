@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}メモリ一覧 - Memory Server MCP{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-list"></i> メモリエントリ一覧</h1>
+            <a href="/create" class="btn btn-success">
+                <i class="fas fa-plus"></i> 新規作成
+            </a>
+        </div>
+        
+        <!-- 検索・フィルタリングセクション -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-search"></i> 検索・フィルタリング</h5>
+                <form id="searchForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label for="searchQuery" class="form-label">キーワード検索</label>
+                            <input type="text" class="form-control" id="searchQuery" 
+                                   placeholder="内容、要約、タグ、キーワードから検索">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="searchTags" class="form-label">タグフィルタ</label>
+                            <input type="text" class="form-control" id="searchTags" 
+                                   placeholder="タグをカンマ区切りで入力">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="searchLimit" class="form-label">表示件数</label>
+                            <select class="form-control" id="searchLimit">
+                                <option value="10">10件</option>
+                                <option value="25">25件</option>
+                                <option value="50">50件</option>
+                                <option value="100">100件</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-search"></i> 検索
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="clearSearch">
+                                <i class="fas fa-times"></i> クリア
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- 読み込み中表示 -->
+        <div id="loadingIndicator" class="text-center" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">読み込み中...</span>
+            </div>
+        </div>
+        
+        <!-- 検索結果 -->
+        <div id="searchResults"></div>
+        
+        <!-- メモリエントリ一覧 -->
+        <div id="memoryList">
+            <!-- JavaScriptで動的に更新 -->
+        </div>
+    </div>
+</div>
+
+<!-- 削除確認モーダル -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">削除確認</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="閉じる"></button>
+            </div>
+            <div class="modal-body">
+                <p>このメモリエントリを削除しますか？この操作は取り消せません。</p>
+                <div id="deleteEntryInfo"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                <button type="button" class="btn btn-danger" id="confirmDelete">削除</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentDeleteId = null;
+
+// ページ読み込み時に全メモリエントリを取得
+document.addEventListener('DOMContentLoaded', function() {
+    loadMemories();
+});
+
+// 検索フォーム送信
+document.getElementById('searchForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    searchMemories();
+});
+
+// クリアボタン
+document.getElementById('clearSearch').addEventListener('click', function() {
+    document.getElementById('searchQuery').value = '';
+    document.getElementById('searchTags').value = '';
+    document.getElementById('searchLimit').value = '10';
+    loadMemories();
+});
+
+// 削除確認
+document.getElementById('confirmDelete').addEventListener('click', function() {
+    if (currentDeleteId) {
+        deleteMemory(currentDeleteId);
+    }
+});
+
+// 全メモリエントリ読み込み
+async function loadMemories() {
+    showLoading(true);
+    try {
+        const response = await fetch('/api/memories');
+        const data = await response.json();
+        
+        if (response.ok) {
+            displayMemories(data.entries, `全 ${data.entries.length} 件のメモリエントリ`);
+        } else {
+            showError('メモリエントリの読み込みに失敗しました');
+        }
+    } catch (error) {
+        showError('ネットワークエラーが発生しました: ' + error.message);
+    }
+    showLoading(false);
+}
+
+// 検索実行
+async function searchMemories() {
+    showLoading(true);
+    
+    const query = document.getElementById('searchQuery').value;
+    const tags = document.getElementById('searchTags').value;
+    const limit = document.getElementById('searchLimit').value;
+    
+    const params = new URLSearchParams();
+    if (query) params.append('query', query);  // API側は 'query' パラメータを期待
+    if (tags) params.append('tags', tags);
+    if (limit) params.append('limit', limit);
+    
+    try {
+        const response = await fetch(`/api/memories/search?${params}`);
+        const data = await response.json();
+        
+        if (response.ok) {
+            displayMemories(data.entries, `検索結果: ${data.entries.length} 件`);
+        } else {
+            showError('検索に失敗しました');
+        }
+    } catch (error) {
+        showError('ネットワークエラーが発生しました: ' + error.message);
+    }
+    showLoading(false);
+}
+
+// メモリエントリ表示
+function displayMemories(memories, title) {
+    const container = document.getElementById('memoryList');
+    
+    if (memories.length === 0) {
+        container.innerHTML = `
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i> メモリエントリが見つかりませんでした
+            </div>
+        `;
+        return;
+    }
+    
+    let html = `<h3>${title}</h3>`;
+    
+    memories.forEach(memory => {
+        const tags = memory.tags.map(tag => `<span class="badge bg-secondary">${escapeHtml(tag)}</span>`).join(' ');
+        const keywords = memory.keywords.map(kw => `<span class="badge bg-info">${escapeHtml(kw)}</span>`).join(' ');
+        
+        html += `
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <h5 class="card-title">ID: ${memory.id}</h5>
+                            <p class="card-text">${escapeHtml(memory.content)}</p>
+                            ${memory.summary ? `<p class="text-muted"><strong>要約:</strong> ${escapeHtml(memory.summary)}</p>` : ''}
+                            <div class="mb-2">
+                                ${tags ? `<div class="mb-1"><strong>タグ:</strong> ${tags}</div>` : ''}
+                                ${keywords ? `<div class="mb-1"><strong>キーワード:</strong> ${keywords}</div>` : ''}
+                            </div>
+                            <small class="text-muted">
+                                作成: ${new Date(memory.created_at).toLocaleString('ja-JP')} | 
+                                更新: ${new Date(memory.updated_at).toLocaleString('ja-JP')}
+                            </small>
+                        </div>
+                        <div class="btn-group ms-3">
+                                                                <a href="/edit/${memory.id}" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-edit"></i> 編集
+                            </a>
+                            <button class="btn btn-sm btn-outline-danger" onclick="showDeleteModal(${memory.id}, '${escapeHtml(memory.content).substring(0, 50)}...')">
+                                <i class="fas fa-trash"></i> 削除
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+// 削除モーダル表示
+function showDeleteModal(id, content) {
+    currentDeleteId = id;
+    document.getElementById('deleteEntryInfo').innerHTML = `
+        <strong>ID:</strong> ${id}<br>
+        <strong>内容:</strong> ${content}
+    `;
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+
+// メモリエントリ削除
+async function deleteMemory(id) {
+    try {
+        const response = await fetch(`/api/memories/${id}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+            showSuccess('メモリエントリが削除されました');
+            loadMemories(); // リロード
+        } else {
+            const error = await response.json();
+            showError('削除に失敗しました: ' + error.message);
+        }
+    } catch (error) {
+        showError('ネットワークエラーが発生しました: ' + error.message);
+    }
+}
+
+// ユーティリティ関数
+function showLoading(show) {
+    document.getElementById('loadingIndicator').style.display = show ? 'block' : 'none';
+}
+
+function showSuccess(message) {
+    showAlert(message, 'success');
+}
+
+function showError(message) {
+    showAlert(message, 'danger');
+}
+
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    const container = document.querySelector('.container');
+    container.insertBefore(alertDiv, container.firstChild);
+    
+    // 5秒後に自動削除
+    setTimeout(() => {
+        if (alertDiv.parentElement) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}
