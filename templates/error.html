@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}エラー - Memory Server MCP{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h4 class="mb-0">
+                    <i class="fas fa-exclamation-triangle"></i> エラーが発生しました
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-danger" role="alert">
+                    <strong>エラー:</strong> {{ error }}
+                </div>
+                
+                <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                    <a href="/" class="btn btn-primary">
+                        <i class="fas fa-home"></i> ホームに戻る
+                    </a>
+                    <button type="button" class="btn btn-outline-secondary" onclick="history.back()">
+                        <i class="fas fa-arrow-left"></i> 前のページに戻る
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

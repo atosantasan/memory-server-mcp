@@ -151,6 +151,8 @@ def build_windows_exe():
         
         # 必要なファイルを含める
         "--add-data", "requirements.txt;.",
+        "--add-data", "templates;templates",
+        "--add-data", "static;static",
         
         # 全体のファイル収集（必要に応じて）
         "--collect-all", "fastmcp",
