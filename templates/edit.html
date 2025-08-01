@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+
+{% block title %}編集 - Memory Server MCP{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-lg-10">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="fas fa-edit"></i> メモリエントリ編集 (ID: {{ entry.id }})</h1>
+            <a href="/" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> 一覧に戻る
+            </a>
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <form id="editForm">
+                    <input type="hidden" id="entryId" value="{{ entry.id }}">
+                    
+                    <div class="mb-3">
+                        <label for="content" class="form-label">
+                            内容 <span class="text-danger">*</span>
+                        </label>
+                        <textarea class="form-control" id="content" name="content" rows="6" 
+                                  placeholder="メモリエントリの内容を入力してください" required>{{ entry.content }}</textarea>
+                        <div class="form-text">メモリエントリのメインコンテンツです。検索対象となります。</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="summary" class="form-label">要約</label>
+                        <textarea class="form-control" id="summary" name="summary" rows="2" 
+                                  placeholder="簡潔な要約を入力してください（任意）">{{ entry.summary if entry.summary }}</textarea>
+                        <div class="form-text">内容の簡潔な要約です。検索でヒットしやすくなります。</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="tags" class="form-label">タグ</label>
+                        <input type="text" class="form-control" id="tags" name="tags" 
+                               placeholder="タグ1, タグ2, タグ3" 
+                               value="{{ entry.tags | join(', ') if entry.tags }}">
+                        <div class="form-text">カンマ区切りでタグを入力してください。分類・検索に使用されます。</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="keywords" class="form-label">キーワード</label>
+                        <input type="text" class="form-control" id="keywords" name="keywords" 
+                               placeholder="キーワード1, キーワード2, キーワード3"
+                               value="{{ entry.keywords | join(', ') if entry.keywords }}">
+                        <div class="form-text">カンマ区切りでキーワードを入力してください。検索に使用されます。</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <small class="text-muted">
+                            <strong>作成日時:</strong> {{ entry.created_at | replace('T', ' ') | replace('Z', '') if entry.created_at }}<br>
+                            <strong>更新日時:</strong> {{ entry.updated_at | replace('T', ' ') | replace('Z', '') if entry.updated_at }}
+                        </small>
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <button type="button" class="btn btn-outline-secondary" onclick="history.back()">
+                            <i class="fas fa-times"></i> キャンセル
+                        </button>
+                        <button type="submit" class="btn btn-primary" id="submitBtn">
+                            <i class="fas fa-save"></i> 更新
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- プレビューセクション -->
+        <div class="card mt-4" id="previewCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-eye"></i> 変更プレビュー</h5>
+            </div>
+            <div class="card-body" id="previewContent">
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let originalData = {};
+
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('editForm');
+    const submitBtn = document.getElementById('submitBtn');
+    
+    // 元のデータを保存
+    originalData = {
+        content: document.getElementById('content').value,
+        summary: document.getElementById('summary').value,
+        tags: document.getElementById('tags').value,
+        keywords: document.getElementById('keywords').value
+    };
+    
+    // フォーム送信
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        updateMemoryEntry();
+    });
+    
+    // リアルタイムプレビュー
+    const contentField = document.getElementById('content');
+    const summaryField = document.getElementById('summary');
+    const tagsField = document.getElementById('tags');
+    const keywordsField = document.getElementById('keywords');
+    
+    [contentField, summaryField, tagsField, keywordsField].forEach(field => {
+        field.addEventListener('input', updatePreview);
+    });
+    
+    // 初期プレビュー更新
+    updatePreview();
+});
+
+// メモリエントリ更新
+async function updateMemoryEntry() {
+    const submitBtn = document.getElementById('submitBtn');
+    const originalText = submitBtn.innerHTML;
+    
+    // ボタンを無効化
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 更新中...';
+    
+    try {
+        const entryId = document.getElementById('entryId').value;
+        const formData = {
+            content: document.getElementById('content').value.trim(),
+            summary: document.getElementById('summary').value.trim() || null,
+            tags: parseCommaSeparatedValues(document.getElementById('tags').value),
+            keywords: parseCommaSeparatedValues(document.getElementById('keywords').value)
+        };
+        
+        // バリデーション
+        if (!formData.content) {
+            showError('内容は必須項目です');
+            return;
+        }
+        
+        // 変更があるかチェック
+        if (isDataUnchanged(formData)) {
+            showInfo('変更されていません');
+            return;
+        }
+        
+        const response = await fetch(`/api/memories/${entryId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showSuccess('メモリエントリが正常に更新されました');
+            
+            // 元データを更新
+            originalData = {
+                content: formData.content,
+                summary: formData.summary || '',
+                tags: formData.tags.join(', '),
+                keywords: formData.keywords.join(', ')
+            };
+            
+            // 3秒後に一覧ページにリダイレクト
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 3000);
+        } else {
+            showError('更新に失敗しました: ' + (result.message || '不明なエラー'));
+        }
+    } catch (error) {
+        showError('ネットワークエラーが発生しました: ' + error.message);
+    } finally {
+        // ボタンを有効化
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
+
+// プレビュー更新
+function updatePreview() {
+    const content = document.getElementById('content').value.trim();
+    const summary = document.getElementById('summary').value.trim();
+    const tags = parseCommaSeparatedValues(document.getElementById('tags').value);
+    const keywords = parseCommaSeparatedValues(document.getElementById('keywords').value);
+    
+    const previewCard = document.getElementById('previewCard');
+    const previewContent = document.getElementById('previewContent');
+    
+    // 変更があるかチェック
+    const currentData = {
+        content: content,
+        summary: summary,
+        tags: tags.join(', '),
+        keywords: keywords.join(', ')
+    };
+    
+    const hasChanges = !isDataUnchanged({
+        content: content,
+        summary: summary || null,
+        tags: tags,
+        keywords: keywords
+    });
+    
+    if (!hasChanges) {
+        previewCard.style.display = 'none';
+        return;
+    }
+    
+    let html = '<div class="alert alert-info"><i class="fas fa-info-circle"></i> 以下の内容に更新されます：</div>';
+    
+    if (content) {
+        html += `<p><strong>内容:</strong><br>${escapeHtml(content)}</p>`;
+    }
+    
+    if (summary) {
+        html += `<p><strong>要約:</strong><br>${escapeHtml(summary)}</p>`;
+    }
+    
+    if (tags.length > 0) {
+        const tagBadges = tags.map(tag => `<span class="badge bg-secondary">${escapeHtml(tag)}</span>`).join(' ');
+        html += `<p><strong>タグ:</strong><br>${tagBadges}</p>`;
+    }
+    
+    if (keywords.length > 0) {
+        const keywordBadges = keywords.map(kw => `<span class="badge bg-info">${escapeHtml(kw)}</span>`).join(' ');
+        html += `<p><strong>キーワード:</strong><br>${keywordBadges}</p>`;
+    }
+    
+    previewContent.innerHTML = html;
+    previewCard.style.display = 'block';
+}
+
+// データが変更されていないかチェック
+function isDataUnchanged(formData) {
+    return (
+        originalData.content === formData.content &&
+        originalData.summary === (formData.summary || '') &&
+        originalData.tags === formData.tags.join(', ') &&
+        originalData.keywords === formData.keywords.join(', ')
+    );
+}
+
+// ユーティリティ関数
+function parseCommaSeparatedValues(value) {
+    if (!value) return [];
+    return value.split(',')
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
+}
+
+function showSuccess(message) {
+    showAlert(message, 'success');
+}
+
+function showError(message) {
+    showAlert(message, 'danger');
+}
+
+function showInfo(message) {
+    showAlert(message, 'info');
+}
+
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    const container = document.querySelector('.container');
+    container.insertBefore(alertDiv, container.firstChild);
+    
+    // 自動削除
+    setTimeout(() => {
+        if (alertDiv.parentElement) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}
