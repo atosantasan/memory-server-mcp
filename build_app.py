@@ -46,19 +46,27 @@ def build_console_version(app_name, main_script):
         "--noconfirm",
         "--clean",
         "--add-data", "requirements.txt:.",
+        "--add-data", "templates:templates",  # テンプレートファイルを含める
+        "--add-data", "static:static",  # 静的ファイルを含める
         "--hidden-import", "fastapi",
         "--hidden-import", "uvicorn",
         "--hidden-import", "fastmcp",
         "--hidden-import", "sqlite3",
         "--hidden-import", "pydantic",
+        "--hidden-import", "jinja2",  # Jinja2テンプレートエンジン
+        "--hidden-import", "jinja2.runtime",  # Jinja2ランタイム
+        "--hidden-import", "jinja2.loaders",  # Jinja2ローダ
+        "--collect-all", "jinja2",  # Jinja2の全てのファイルを含める
         "--hidden-import", "importlib.metadata",
         "--hidden-import", "pkg_resources",
         "--collect-all", "fastmcp",
         "--copy-metadata", "fastmcp",
         "--copy-metadata", "mcp",
         "--copy-metadata", "fastapi",
-        "--copy-metadata", "uvicorn",
+        "--copy-metadata", "uvicorn", 
         "--copy-metadata", "pydantic",
+
+        "--hidden-import", "markupsafe",  # Jinja2の依存関係
         main_script
     ]
     
@@ -82,19 +90,27 @@ def build_gui_version(app_name, main_script):
         "--noconfirm",  # 既存ファイルを上書き
         "--clean",  # キャッシュをクリア
         "--add-data", "requirements.txt:.",  # requirements.txtを含める
+        "--add-data", "templates:templates",  # テンプレートファイルを含める
+        "--add-data", "static:static",  # 静的ファイルを含める
         "--hidden-import", "fastapi",
         "--hidden-import", "uvicorn",
         "--hidden-import", "fastmcp",
         "--hidden-import", "sqlite3",
         "--hidden-import", "pydantic",
+        "--hidden-import", "jinja2",  # Jinja2テンプレートエンジン
+        "--hidden-import", "jinja2.runtime",  # Jinja2ランタイム
+        "--hidden-import", "jinja2.loaders",  # Jinja2ローダ
+        "--collect-all", "jinja2",  # Jinja2の全てのファイルを含める
         "--hidden-import", "importlib.metadata",
         "--hidden-import", "pkg_resources",
         "--collect-all", "fastmcp",  # fastmcpの全てのファイルを含める
         "--copy-metadata", "fastmcp", # fastmcpのメタデータを含める
         "--copy-metadata", "mcp",     # mcpのメタデータを含める
         "--copy-metadata", "fastapi",
-        "--copy-metadata", "uvicorn",
+        "--copy-metadata", "uvicorn", 
         "--copy-metadata", "pydantic",
+
+        "--hidden-import", "markupsafe",  # Jinja2の依存関係
         main_script
     ]
     
